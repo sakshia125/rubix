@@ -43,19 +43,15 @@ public class CachingHadoop2FileSystem extends CachingFileSystem<NativeS3FileSyst
             initializeClusterManager(conf);
         }
         setClusterManager(clusterManager);
-
         super.initialize(uri, conf);
     }
 
     private synchronized void initializeClusterManager(Configuration conf)
-
     {
         if (clusterManager != null) {
             return;
         }
-
         clusterManager = new Hadoop2ClusterManager();
-
         clusterManager.initialize(conf);
     }
 }

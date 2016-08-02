@@ -43,7 +43,7 @@ public class TestClusterManager
     public void testGetNodes()
             throws IOException
     {
-        HttpServer server = startServer(true, new MultipleNodeHandler());
+        HttpServer server = startServer(new MultipleNodeHandler());
         LOG.info("Started Server");
         ClusterManager cm = getHadoop2ClusterManager();
         List<String> nodes = cm.getNodes();
@@ -57,7 +57,7 @@ public class TestClusterManager
     public void testMasterOnlyCluster()
             throws IOException
     {
-        HttpServer server = startServer(true, new SingleNodeHandler());
+        HttpServer server = startServer(new SingleNodeHandler());
         LOG.info("Started Server");
         ClusterManager cm = getHadoop2ClusterManager();
         List<String> nodes = cm.getNodes();
@@ -72,7 +72,7 @@ public class TestClusterManager
     public void testFailOnAllNodesUnhealthy()
             throws IOException
     {
-        HttpServer server = startServer(true, new FailedNodeHandler());
+        HttpServer server = startServer(new FailedNodeHandler());
         LOG.info("Started Server");
         try{
             ClusterManager cm = getHadoop2ClusterManager();
@@ -98,14 +98,12 @@ public class TestClusterManager
             return clusterManager;
     }
 
-    private HttpServer startServer(boolean master, HttpHandler handler)
+    private HttpServer startServer(HttpHandler handler)
             throws IOException
     {
 
         HttpServer server = HttpServer.create(new InetSocketAddress(45326), 0);
-        if (master) {
-            server.createContext("/ws/v1/cluster/nodes", handler);
-        }
+        server.createContext("/ws/v1/cluster/nodes", handler);
         server.setExecutor(null); // creates a default executor
         server.start();
         return server;
@@ -147,6 +145,5 @@ public class TestClusterManager
             os.close();
         }
     }
-
 }
 

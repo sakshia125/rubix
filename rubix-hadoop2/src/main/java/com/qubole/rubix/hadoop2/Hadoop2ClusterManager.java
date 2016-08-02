@@ -22,10 +22,6 @@ import com.google.gson.reflect.TypeToken;
 
 import com.qubole.rubix.core.ClusterManager;
 import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
 import java.net.HttpURLConnection;
@@ -33,7 +29,6 @@ import java.net.InetAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -55,18 +50,15 @@ public class Hadoop2ClusterManager extends ClusterManager
 
     static String ADDRESS = "yarn.resourcemanager.webapp.address";
 
-    public Hadoop2ClusterManager()
-    {}
-
     @Override
     public void initialize(Configuration conf)
     {
         super.initialize(conf);
 
 
-        this.address=conf.get(ADDRESS,address);
-        this.serverAddress = address.substring(0,address.indexOf(":"));
-        this.serverPort = Integer.parseInt(address.substring(address.indexOf(":")+1));
+        this.address=conf.get(ADDRESS, address);
+        this.serverAddress = address.substring(0, address.indexOf(":"));
+        this.serverPort = Integer.parseInt(address.substring(address.indexOf(":") + 1));
         nodesSupplier = Suppliers.memoizeWithExpiration(new Supplier<List<String>>() {
 
             @Override
@@ -101,14 +93,16 @@ public class Hadoop2ClusterManager extends ClusterManager
                         return ImmutableList.of();
                     }
                     if (response.length() == 0) {
+                        //response contains master node too
                         throw new Exception("No nodes not present");
                     }
                     Gson gson = new Gson();
                     Type type = new TypeToken<Nodes>() {}.getType();
                     Nodes nodes = gson.fromJson(response.toString(),type);
                     List<Elements> allNodes = nodes.getNodes().getNode();
-                    if(allNodes.size()==1){
-                        isOnlyMaster=true;
+                    if(allNodes.size() == 1){
+                        //Master is the only node present
+                        isOnlyMaster = true;
                     }
 
                     List<Elements> unhealthyNodes = new ArrayList<Elements>();
@@ -118,11 +112,12 @@ public class Hadoop2ClusterManager extends ClusterManager
                         if (!state.equalsIgnoreCase("Running") && !state.equalsIgnoreCase("New") && !state.equalsIgnoreCase("Rebooted")) {
                             unhealthyNodes.add(node);
                         }
+                        //remove master node
                         if (nodeHostName.equalsIgnoreCase(InetAddress.getLocalHost().getHostName())) {
                             unhealthyNodes.add(node);
                         }
                     }
-                    //keep only healthy nodes*/
+                    //keep only healthy data nodes*/
                     if(!unhealthyNodes.isEmpty()){
                         allNodes.removeAll(unhealthyNodes);
                     }
@@ -131,6 +126,7 @@ public class Hadoop2ClusterManager extends ClusterManager
                     for (Elements node : allNodes) {
                         hosts.add(node.getNodeHostName());
                     }
+
                     if (hosts.isEmpty()) {
                         if (isOnlyMaster) {
                             hosts.add(InetAddress.getLocalHost().getHostName());
@@ -142,7 +138,7 @@ public class Hadoop2ClusterManager extends ClusterManager
 
                     List<String> hostList = Lists.newArrayList(hosts.toArray(new String[0]));
                     Collections.sort(hostList);
-                    log.info("Hostlist: "+hostList.toString());
+                    log.info("Hostlist: "+ hostList.toString());
                     return hostList;
                 }
                 catch (Exception e) {
@@ -209,17 +205,17 @@ public class Hadoop2ClusterManager extends ClusterManager
     public static class Elements
     {
         /*
-        rack 	         string 	The rack location of this node
-        state 	         string 	State of the node - valid values are: NEW, RUNNING, UNHEALTHY, DECOMMISSIONED, LOST, REBOOTED
-        id 	             string 	The node id
-        nodeHostName 	 string 	The host name of the node
-        nodeHTTPAddress  string 	The nodes HTTP address
-        healthStatus 	 string 	The health status of the node - Healthy or Unhealthy
-        healthReport 	 string 	A detailed health report
-        lastHealthUpdate long 	    The last time the node reported its health (in ms since epoch)
-        usedMemoryMB 	 long 	    The total about of memory currently used on the node (in MB)
-        availMemoryMB 	 long 	    The total amount of memory currently available on the node (in MB)
-        numContainers 	 int 	    The total number of containers currently running on the node
+        rack 	         string
+        state 	         string
+        id 	             string
+        nodeHostName 	 string
+        nodeHTTPAddress  string
+        healthStatus 	 string
+        healthReport 	 string
+        lastHealthUpdate long
+        usedMemoryMB 	 long
+        availMemoryMB 	 long
+        numContainers 	 int
         */
 
         String nodeHostName;
