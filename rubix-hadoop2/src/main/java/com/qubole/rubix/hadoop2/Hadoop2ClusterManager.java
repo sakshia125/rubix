@@ -38,6 +38,10 @@ import java.util.logging.Logger;
 
 import org.apache.hadoop.conf.Configuration;
 
+/**
+ * Created by sakshia on 29/7/16.
+ */
+
 public class Hadoop2ClusterManager extends ClusterManager
 {
 

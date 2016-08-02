@@ -31,7 +31,7 @@ import static org.testng.AssertJUnit.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
 /**
- * Created by qubole on 1/8/16.
+ * Created by sakshia on 1/8/16.
  */
 @Test(singleThreaded = true)
 public class TestClusterManager
