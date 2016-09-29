@@ -41,7 +41,7 @@ import java.lang.reflect.Type;
 import java.net.URI;
 import java.util.List;
 
-import static com.qubole.rubix.spi.CachingConfigHelper.skipCache;
+import static com.qubole.rubix.spi.CacheConfig.skipCache;
 /**
  * Created by stagra on 29/12/15.
  */
@@ -115,8 +115,9 @@ public abstract class CachingFileSystem<T extends FileSystem> extends FileSystem
 
         return new FSDataInputStream(
                 new BufferedFSInputStream(
-                        new CachingInputStream(inputStream, this, path, this.getConf(), statsMBean, clusterManager.getSplitSize(), clusterManager.getClusterType()),
-                        CacheConfig.getBlockSize(getConf())));
+                        new CachingInputStream(inputStream, this, path, this.getConf(), statsMBean,
+                                               clusterManager.getSplitSize(), clusterManager.getClusterType()),
+                                                    CacheConfig.getBlockSize(getConf())));
     }
 
     @Override

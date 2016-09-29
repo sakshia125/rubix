@@ -18,10 +18,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.qubole.rubix.bookkeeper.BookKeeperClient;
 import com.qubole.rubix.bookkeeper.Location;
+import com.qubole.rubix.bookkeeper.RetryingBookkeeperClient;
 import com.qubole.rubix.spi.CacheConfig;
-import com.qubole.rubix.spi.CachingConfigHelper;
 import com.qubole.rubix.spi.ClusterType;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -64,7 +63,7 @@ public class CachingInputStream
     private String localPath;
     private long lastModified;
 
-    private BookKeeperClient bookKeeperClient;
+    private RetryingBookkeeperClient bookKeeperClient;
     private Configuration conf;
 
     private boolean strictMode = false;
@@ -99,10 +98,9 @@ public class CachingInputStream
     }
 
     private void initialize(FSDataInputStream parentInputStream, Configuration conf)
-            throws IOException
     {
         this.conf = conf;
-        this.strictMode = CachingConfigHelper.isStrictMode(conf);
+        this.strictMode = CacheConfig.isStrictMode(conf);
         try {
             this.bookKeeperClient = createBookKeeperClient(conf);
         }
@@ -122,8 +120,15 @@ public class CachingInputStream
         catch (FileNotFoundException e) {
             log.info("Creating local file " + localPath);
             File file = new File(localPath);
-            file.createNewFile();
-            this.localFileForReading = new RandomAccessFile(file, "rw");
+            try {
+                file.createNewFile();
+                this.localFileForReading = new RandomAccessFile(file, "rw");
+            }
+            catch (IOException e1) {
+                log.error("Error in creating local file " + localPath, e1);
+                // reset bookkeeper client so that we take direct route
+                this.bookKeeperClient = null;
+            }
         }
     }
 
@@ -352,7 +357,9 @@ public class CachingInputStream
     {
         try {
             inputStream.close();
-            localFileForReading.close();
+            if (localFileForReading != null) {
+                localFileForReading.close();
+            }
             if (bookKeeperClient != null) {
                 bookKeeperClient.close();
             }
