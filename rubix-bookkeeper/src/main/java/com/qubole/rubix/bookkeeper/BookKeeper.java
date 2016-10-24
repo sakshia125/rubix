@@ -23,8 +23,9 @@ import com.google.common.cache.Weigher;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hashing;
-import com.qubole.rubix.hadoop2.hadoop2CM.Hadoop2ClusterManager;
-import com.qubole.rubix.hadoop2.hadoop2FS.CachingNativeS3FileSystem;
+import com.qubole.rubix.hadoop2.Hadoop2ClusterManager;
+import com.qubole.rubix.hadoop2.CachingNativeS3FileSystem;
+import com.qubole.rubix.presto.PrestoClusterManager;
 import com.qubole.rubix.spi.BlockLocation;
 import com.qubole.rubix.spi.BookKeeperFactory;
 import com.qubole.rubix.spi.CacheConfig;
@@ -55,6 +56,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static com.qubole.rubix.spi.ClusterType.HADOOP2_CLUSTER_MANAGER;
+import static com.qubole.rubix.spi.ClusterType.PRESTO_CLUSTER_MANAGER;
 import static com.qubole.rubix.spi.ClusterType.TEST_CLUSTER_MANAGER;
 
 /**
@@ -166,16 +168,23 @@ public class BookKeeper
                         log.warn("Could not get nodeName", e);
                     }
 
-                    if (clusterType == HADOOP2_CLUSTER_MANAGER.ordinal()) {
-                        clusterManager = new Hadoop2ClusterManager();
-                        clusterManager.initialize(conf);
-                        nodes = clusterManager.getNodes();
-                        splitSize = clusterManager.getSplitSize();
-                    }
-                    else if (clusterType == TEST_CLUSTER_MANAGER.ordinal()) {
+                    if (clusterType == TEST_CLUSTER_MANAGER.ordinal()) {
                         nodes = new ArrayList<>();
                         nodes.add(nodeName);
                         splitSize = 64 * 1024 * 1024;
+                    }
+
+                    else {
+                        if (clusterType == HADOOP2_CLUSTER_MANAGER.ordinal()) {
+                            clusterManager = new Hadoop2ClusterManager();
+                        }
+
+                        else if (clusterType == PRESTO_CLUSTER_MANAGER.ordinal()) {
+                            clusterManager = new PrestoClusterManager();
+                        }
+                        clusterManager.initialize(conf);
+                        nodes = clusterManager.getNodes();
+                        splitSize = clusterManager.getSplitSize();
                     }
                     nodeListSize = nodes.size();
                     currentNodeIndex = nodes.indexOf(nodeName);
