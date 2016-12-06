@@ -23,19 +23,19 @@ import com.google.common.cache.Weigher;
 import com.google.common.hash.HashCode;
 import com.google.common.hash.HashFunction;
 import com.google.common.hash.Hashing;
-import com.qubole.rubix.hadoop2.hadoop2CM.Hadoop2ClusterManager;
-import com.qubole.rubix.hadoop2.hadoop2FS.CachingNativeS3FileSystem;
+import com.qubole.rubix.core.CachingFileSystem;
+import com.qubole.rubix.hadoop2.Hadoop2ClusterManager;
 import com.qubole.rubix.spi.BlockLocation;
 import com.qubole.rubix.spi.BookKeeperFactory;
 import com.qubole.rubix.spi.CacheConfig;
 import com.qubole.rubix.spi.ClusterManager;
 import com.qubole.rubix.spi.ClusterType;
-import com.qubole.rubix.spi.DataRead;
 import com.qubole.rubix.spi.Location;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.thrift.shaded.TException;
 
@@ -43,13 +43,10 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -88,13 +85,15 @@ public class BookKeeper
             throws TException
     {
         initializeClusterManager(clusterType);
-
         if (nodeName == null) {
             log.error("Node name is null for Cluster Type" + ClusterType.findByValue(clusterType));
             return null;
         }
 
-        Set<Long> localSplits = new HashSet<>();
+        if (currentNodeIndex == -1) {
+            return null;
+        }
+
         Map<Long, String> blockSplits = new HashMap<>();
         long blockNumber = 0;
 
@@ -107,9 +106,6 @@ public class BookKeeper
             HashFunction hf = Hashing.md5();
             HashCode hc = hf.hashString(key, Charsets.UTF_8);
             int nodeIndex = Hashing.consistentHash(hc, nodeListSize);
-            if (nodeIndex == currentNodeIndex) {
-                localSplits.add(blockNumber);
-            }
             blockSplits.put(blockNumber, nodes.get(nodeIndex));
             blockNumber++;
         }
@@ -130,16 +126,17 @@ public class BookKeeper
         List<BlockLocation> blockLocations = new ArrayList<>((int) (endBlock - startBlock));
         int blockSize = CacheConfig.getBlockSize(conf);
 
+        //TODO: Store Node indices too, i.e. split to nodeIndex map and compare indices here instead of strings(nodenames).
+
         for (long blockNum = startBlock; blockNum < endBlock; blockNum++) {
             totalRequests++;
             long split = (blockNum * blockSize) / splitSize;
-
             if (md.isBlockCached(blockNum)) {
                 blockLocations.add(new BlockLocation(Location.CACHED, blockSplits.get(split)));
                 cachedRequests++;
             }
             else {
-                if (localSplits.contains(split)) {
+                if (blockSplits.get(split).equalsIgnoreCase(nodes.get(currentNodeIndex))) {
                     blockLocations.add(new BlockLocation(Location.LOCAL, blockSplits.get(split)));
                     remoteRequests++;
                 }
@@ -191,6 +188,7 @@ public class BookKeeper
 
     @Override
     public void setAllCached(String remotePath, long fileLength, long lastModified, long startBlock, long endBlock)
+            throws TException
     {
         FileMetadata md;
         md = fileMetadataCache.getIfPresent(remotePath);
@@ -223,6 +221,67 @@ public class BookKeeper
         stats.put("Remote Reads", ((double) remoteRequests));
         stats.put("Non-Local Reads", ((double) (totalRequests - cachedRequests - remoteRequests)));
         return stats;
+    }
+
+    //This method is to ensure that data required by another node is cached before it is read by that node
+    //using localTransferServer.
+    // If the data is not already cached, remoteReadRequest for that block is sent and data is cached.
+
+    //TODO : buffer is initialized everytime readData is called and it contains garbage value which is not required.
+     // We cannot make it static because the variable is used in remoteReadRequestChain to write (cache) data to files.
+    // So, it has to store the correct value in each thread. getCacheStatus is called twice.
+    @Override
+    public boolean readData(String remotePath, long offset, int length, long fileSize, long lastModified, int clusterType)
+            throws TException
+    {
+        int blockSize = CacheConfig.getBlockSize(conf);
+        byte[] buffer = new byte[blockSize];
+        BookKeeperFactory bookKeeperFactory = new BookKeeperFactory(this);
+        FileSystem fs = null;
+        FSDataInputStream inputStream = null;
+        Path path = new Path(remotePath);
+        long startBlock = offset / blockSize;
+        long endBlock = ((offset + (length - 1)) / CacheConfig.getBlockSize(conf)) + 1;
+        try {
+            int idx = 0;
+            List<BlockLocation> blockLocations = getCacheStatus(remotePath, fileSize, lastModified, startBlock, endBlock, clusterType);
+
+            for (int blockNum = (int) startBlock; blockNum < endBlock; blockNum++, idx++) {
+                int readStart = blockNum * blockSize;
+                log.debug(" blockLocation is: " + blockLocations.get(idx).getLocation());
+                if (blockLocations.get(idx).getLocation() != Location.CACHED) {
+                    if (fs == null) {
+                        fs = path.getFileSystem(conf);
+                        fs.initialize(path.toUri(), conf);
+
+                        if (CachingFileSystem.class.isAssignableFrom(fs.getClass())) {
+                            ((CachingFileSystem) fs).setBookKeeper(bookKeeperFactory, conf);
+                        }
+                        else {
+                            throw new Exception("Not a subclass of CachingFileSystem");
+                        }
+                        inputStream = fs.open(path, blockSize);
+                    }
+                    inputStream.seek(readStart);
+                    inputStream.read(buffer, 0, blockSize);
+                }
+            }
+            return true;
+        }
+        catch (Exception e) {
+            log.warn("Could not cache data: " + Throwables.getStackTraceAsString(e));
+            return false;
+        }
+        finally {
+            if (inputStream != null) {
+                try {
+                    inputStream.close();
+                }
+                catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
     }
 
     private long setCorrectEndBlock(long endBlock, long fileLength, String remotePath)
@@ -304,30 +363,6 @@ public class BookKeeper
                 })
                 .build();
     }
-
-   public DataRead readData(String path, long readStart, int length)
-   {
-       DataRead dataRead = new DataRead();
-       byte[] buffer = new byte[length];
-       int nread;
-       BookKeeperFactory bookKeeperFactory = new BookKeeperFactory(this);
-       CachingNativeS3FileSystem fs = null;
-       try {
-           fs = new CachingNativeS3FileSystem(bookKeeperFactory, new Path(path), conf);
-           FSDataInputStream inputStream = fs.open(new Path(path), length);
-           inputStream.seek(readStart);
-           nread = inputStream.read(buffer, 0, length);
-           dataRead.data = ByteBuffer.wrap(buffer, 0, nread);
-           dataRead.sizeRead = nread;
-           inputStream.close();
-           return dataRead;
-       }
-       catch (IOException e) {
-           e.printStackTrace();
-       }
-       return null;
-
-   }
 
     private static class CreateFileMetadataCallable
             implements Callable<FileMetadata>

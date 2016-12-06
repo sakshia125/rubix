@@ -13,42 +13,49 @@
 package com.qubole.rubix.core;
 
 import com.google.common.base.Throwables;
-import com.qubole.rubix.spi.BookKeeperFactory;
-import com.qubole.rubix.spi.CacheConfig;
-import com.qubole.rubix.spi.DataRead;
-import com.qubole.rubix.spi.RetryingBookkeeperClient;
+import com.qubole.rubix.spi.DataTransferClientHelper;
+import com.qubole.rubix.spi.DataTransferHeader;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.thrift.shaded.TException;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
+
+import static com.google.common.base.Preconditions.checkState;
 
 /**
  * Created by sakshia on 31/8/16.
  */
 public class NonLocalReadRequestChain extends ReadRequestChain
 {
-    private final String filePath;
+    long fileSize;
+    String filePath;
+    long lastModified;
     String remoteNodeName;
-    RetryingBookkeeperClient bookKeeperClient;
     Configuration conf;
-    private boolean strictMode = false;
     int totalRead = 0;
     int directRead = 0;
-    FileSystem fs;
-    FSDataInputStream inputStream = null;
+    FileSystem remoteFileSystem;
+    int clusterType;
+    public boolean strictMode;
 
-    private static final Log log = LogFactory.getLog(ReadRequestChain.class);
+    private static final Log log = LogFactory.getLog(NonLocalReadRequestChain.class);
 
-    public NonLocalReadRequestChain(String remoteNodeName, Configuration conf, FileSystem fs, String remotePath)
+    public NonLocalReadRequestChain(String remoteLocation, long fileSize, long lastModified, Configuration conf, FileSystem remoteFileSystem, String remotePath, int clusterType, boolean strictMode)
     {
-        this.remoteNodeName = remoteNodeName;
-        this.fs = fs;
-        this.conf = conf;
-        this.strictMode = CacheConfig.isStrictMode(conf);
+        this.remoteNodeName = remoteLocation;
+        this.remoteFileSystem = remoteFileSystem;
+        this.lastModified = lastModified;
         this.filePath = remotePath;
+        this.fileSize = fileSize;
+        this.conf = conf;
+        this.clusterType = clusterType;
+        this.strictMode = strictMode;
     }
 
     public ReadRequestChainStats getStats()
@@ -63,64 +70,79 @@ public class NonLocalReadRequestChain extends ReadRequestChain
     public Integer call()
             throws Exception
     {
+        Thread.currentThread().setName(threadName);
         if (readRequests.size() == 0) {
             return 0;
         }
-
-        try {
-            BookKeeperFactory bookKeeperFactory = new BookKeeperFactory();
-            this.bookKeeperClient = bookKeeperFactory.createBookKeeperClient(remoteNodeName, conf);
-        }
-        catch (Exception e) {
-            if (strictMode) {
-                throw Throwables.propagate(e);
-            }
-            log.warn("Could not create BookKeeper Client " + Throwables.getStackTraceAsString(e));
-            return directReadRequest(0);
-        }
+        checkState(isLocked, "Trying to execute Chain without locking");
 
         for (ReadRequest readRequest : readRequests) {
-            int readLength = 0;
-            int lengthRemaining = readRequest.getActualReadLength();
-            int bufferLength = CacheConfig.getBufferSize(conf);
-            DataRead dataRead;
-
-            while (lengthRemaining > 0) {
-                if (lengthRemaining < bufferLength) {
-                    bufferLength = lengthRemaining;
+            SocketChannel dataTransferClient;
+            try {
+                dataTransferClient = DataTransferClientHelper.createDataTransferClient(remoteNodeName, conf);
+            }
+            catch (Exception e) {
+                log.warn("Could not create Data Transfer Client ", e);
+                if (strictMode) {
+                    throw Throwables.propagate(e);
                 }
-                try {
-                    dataRead = bookKeeperClient.readData(filePath, readRequest.getActualReadStart() + readLength, bufferLength);
-                }
-                catch (TException e) {
-                    log.info("Could not read data from BookKeeper " + Throwables.getStackTraceAsString(e));
+                else {
                     return directReadRequest(readRequests.indexOf(readRequest));
                 }
+            }
+            try {
+                int nread = 0;
+                ByteBuffer buf = DataTransferClientHelper.writeHeaders(conf, new DataTransferHeader(readRequest.getActualReadStart(),
+                        readRequest.getActualReadLength(), fileSize, lastModified, clusterType, filePath));
 
-                System.arraycopy(dataRead.getData(), 0, readRequest.destBuffer, readRequest.getDestBufferOffset() + readLength, dataRead.getSizeRead());
-                readLength += dataRead.getSizeRead();
-                lengthRemaining = readRequest.getActualReadLength() - readLength;
-                totalRead += dataRead.getSizeRead();
+                dataTransferClient.write(buf);
+                int bytesread = 0;
+                ByteBuffer dst = ByteBuffer.wrap(readRequest.destBuffer, readRequest.getDestBufferOffset(), readRequest.destBuffer.length - readRequest.getDestBufferOffset());
+                while (bytesread != readRequest.getActualReadLength()) {
+                    nread = dataTransferClient.read(dst);
+                    bytesread += nread;
+                    totalRead += nread;
+                    if (nread == -1) {
+                        totalRead -= bytesread;
+                        throw new Exception("Error reading from Local Transfer Server");
+                    }
+                    dst.position(bytesread + readRequest.getDestBufferOffset());
+               }
+            }
+            catch (Exception e) {
+                log.info("Error reading data from node : " + remoteNodeName, e);
+                if (strictMode) {
+                    throw Throwables.propagate(e);
+                }
+                else {
+                    return directReadRequest(readRequests.indexOf(readRequest));
+                }
+            }
+            finally {
+                try {
+                    log.info(String.format("Read %d bytes internally from node %s", totalRead, remoteNodeName));
+                    dataTransferClient.close();
+                }
+                catch (IOException e) {
+                    log.info("Error closing Data Transfer client : " + remoteNodeName, e);
+                }
             }
         }
 
-        if (bookKeeperClient != null) {
-            bookKeeperClient.close();
-        }
-        log.info(String.format("Read %d bytes directly from node %s", totalRead, remoteNodeName));
         return totalRead;
     }
 
     private int directReadRequest(int index)
             throws Exception
     {
-        inputStream = fs.open(new Path(filePath));
+        FSDataInputStream inputStream = remoteFileSystem.open(new Path(filePath));
         DirectReadRequestChain readChain = new DirectReadRequestChain(inputStream);
         for (ReadRequest readRequest : readRequests.subList(index, readRequests.size())) {
             readChain.addReadRequest(readRequest);
         }
         readChain.lock();
         directRead = readChain.call();
+        inputStream.close();
         return (totalRead + directRead);
     }
 }

@@ -10,15 +10,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License. See accompanying LICENSE file.
  */
-package com.qubole.rubix.hadoop2.hadoop2FS;
-import com.qubole.rubix.spi.BookKeeperFactory;
+package com.qubole.rubix.hadoop2;
 import com.qubole.rubix.core.CachingFileSystem;
-import com.qubole.rubix.hadoop2.hadoop2CM.Hadoop2ClusterManager;
 import com.qubole.rubix.spi.ClusterManager;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.s3native.NativeS3FileSystem;
 
 import java.io.IOException;
@@ -38,14 +35,6 @@ public class CachingNativeS3FileSystem
             throws IOException
     {
         super();
-    }
-
-    public CachingNativeS3FileSystem(BookKeeperFactory factory, Path path, Configuration conf)
-            throws IOException
-    {
-        super();
-        setBookKeeper(factory, conf);
-        initialize(path.toUri(), conf);
     }
 
     @Override

@@ -60,7 +60,9 @@ public class CacheConfig
     public static String dataCacheBookkeeperMaxThreadsConf = "hadoop.cache.data.bookkeeper.max-threads";
     private static String clientTimeoutConf = "hadoop.cache.data.client.timeout";
     private static String maxRetriesConf = "hadoop.cache.data.client.num-retries";
-    private static String bufferSizeConf = "hadoop.cache.data.buffer.size";
+    private static String localTransferBufferSizeConf = "hadoop.cache.data.buffer.size";
+    public static String localServerPortConf = "hadoop.cache.data.local.server.port";
+    private static String dataMaxHeaderSizeConf = "hadoop.cache.data.transfer.buffer.size";
     static String fileCacheDirSuffixConf = "/fcache/";
     static int maxDisksConf = 5;
 
@@ -72,8 +74,9 @@ public class CacheConfig
     private static final String dataCacheDirPrefixes = "/media/ephemeral";
     private static final int blockSize = 1 * 1024 * 1024; // 1MB
     private static int serverPort = 8899;
+    private static int localServerPort = 8898;
     private static int serverMaxThreads = Integer.MAX_VALUE;
-    public static int bufferSize = 10 * 1024 * 1024;
+    public static int localTransferbufferSize = 10 * 1024 * 1024;
 
     private CacheConfig()
     {
@@ -342,8 +345,19 @@ public class CacheConfig
         c.setInt(DATA_CACHE_TABLE_COLS_CHOSEN, chosen);
     }
 
-    public static int getBufferSize(Configuration c)
+    //localTransferbufferSize for reads in LocalTransferServer
+    public static int getLocalTransferBufferSize(Configuration c)
     {
-        return c.getInt(bufferSizeConf, bufferSize);
+        return c.getInt(localTransferBufferSizeConf, localTransferbufferSize);
+    }
+
+    public static int getLocalServerPort(Configuration conf)
+    {
+        return conf.getInt(localServerPortConf, localServerPort);
+    }
+
+    public static int getMaxHeaderSize(Configuration conf)
+    {
+        return conf.getInt(dataMaxHeaderSizeConf, 1024);
     }
 }

@@ -48,15 +48,4 @@ public class BookKeeperFactory
             return new LocalBookKeeperClient(transport, bookKeeper);
         }
     }
-
-    public RetryingBookkeeperClient createBookKeeperClient(String remoteNodeName, Configuration conf)
-            throws TTransportException
-    {
-        TTransport transport;
-        transport = new TSocket(remoteNodeName, CacheConfig.getServerPort(conf), CacheConfig.getClientTimeout(conf));
-        transport.open();
-
-        RetryingBookkeeperClient retryingBookkeeperClient = new RetryingBookkeeperClient(transport, CacheConfig.getMaxRetries(conf));
-        return retryingBookkeeperClient;
-    }
 }

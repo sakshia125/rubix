@@ -29,6 +29,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSInputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
@@ -71,27 +72,25 @@ public class CachingInputStream
     private Configuration conf;
 
     private boolean strictMode = false;
-    private long splitSize;
     ClusterType clusterType;
     FileSystem remoteFileSystem;
 
-    public CachingInputStream(FSDataInputStream parentInputStream, FileSystem parentFs, Path backendPath, Configuration conf, CachingFileSystemStats statsMbean, long splitSize, ClusterType clusterType, BookKeeperFactory bookKeeperFactory, FileSystem remoteFileSystem)
+    public CachingInputStream(FSDataInputStream parentInputStream, FileSystem parentFs, Path backendPath, Configuration conf, CachingFileSystemStats statsMbean, ClusterType clusterType, BookKeeperFactory bookKeeperFactory, FileSystem remoteFileSystem)
             throws IOException
     {
         this.remotePath = backendPath.toString();
-        this.fileSize = parentFs.getLength(backendPath);
+        FileStatus fileStatus = parentFs.getFileStatus(backendPath);
+        this.fileSize = fileStatus.getLen();
         this.remoteFileSystem = remoteFileSystem;
-        lastModified = parentFs.getFileStatus(backendPath).getModificationTime();
+        lastModified = fileStatus.getModificationTime();
         initialize(parentInputStream,
                 conf, bookKeeperFactory);
         this.statsMbean = statsMbean;
-        this.splitSize = splitSize;
         this.clusterType = clusterType;
-
     }
 
     @VisibleForTesting
-    public CachingInputStream(FSDataInputStream parentInputStream, Configuration conf, Path backendPath, long size, long lastModified, CachingFileSystemStats statsMbean, long splitSize, ClusterType clusterType, BookKeeperFactory bookKeeperFactory)
+    public CachingInputStream(FSDataInputStream parentInputStream, Configuration conf, Path backendPath, long size, long lastModified, CachingFileSystemStats statsMbean, ClusterType clusterType, BookKeeperFactory bookKeeperFactory, FileSystem remoteFileSystem)
             throws IOException
     {
         this.remotePath = backendPath.toString();
@@ -99,7 +98,6 @@ public class CachingInputStream
         this.lastModified = lastModified;
         initialize(parentInputStream, conf, bookKeeperFactory);
         this.statsMbean = statsMbean;
-        this.splitSize = splitSize;
         this.clusterType = clusterType;
     }
 
@@ -193,6 +191,7 @@ public class CachingInputStream
                 length);
 
         log.debug("Executing Chains");
+
         // start read requests
         ImmutableList.Builder builder = ImmutableList.builder();
         int sizeRead = 0;
@@ -318,7 +317,7 @@ public class CachingInputStream
                     String remoteLocation = isCached.get(idx).getRemoteLocation();
                     log.debug(String.format("Sending block %d to NonLocalReadRequestChain to node : %s", blockNum, remoteLocation));
                     if (!nonLocalRequests.containsKey(remoteLocation)) {
-                        NonLocalReadRequestChain nonLocalReadRequestChain = new NonLocalReadRequestChain(remoteLocation, conf, remoteFileSystem, remotePath);
+                        NonLocalReadRequestChain nonLocalReadRequestChain = new NonLocalReadRequestChain(remoteLocation, fileSize, lastModified, conf, remoteFileSystem, remotePath, clusterType.ordinal(), strictMode);
                         nonLocalRequests.put(remoteLocation, nonLocalReadRequestChain);
                     }
                     nonLocalRequests.get(remoteLocation).addReadRequest(readRequest);

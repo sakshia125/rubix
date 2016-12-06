@@ -42,8 +42,7 @@ public class BookKeeperServer
     private static Log log = LogFactory.getLog(BookKeeperServer.class.getName());
 
     private BookKeeperServer()
-    {
-    }
+    {}
 
     public static void main(String[] args)
     {
@@ -55,7 +54,6 @@ public class BookKeeperServer
                 startServer(conf);
             }
         };
-
         new Thread(bookKeeperServer).run();
     }
 
@@ -75,7 +73,7 @@ public class BookKeeperServer
         }
         catch (TTransportException e) {
             e.printStackTrace();
-            log.error(String.format("Error starting server %s", Throwables.getStackTraceAsString(e)));
+            log.error(String.format("Error starting BookKeeper server %s", Throwables.getStackTraceAsString(e)));
         }
     }
 
